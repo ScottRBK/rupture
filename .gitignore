@@ -1,0 +1,9 @@
+/target
+
+#environment
+*.env
+
+#tooling
+.sonarqube/
+.pi/ 
+

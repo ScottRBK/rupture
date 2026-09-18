@@ -1,0 +1,11 @@
+[package]
+name = "rupture-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = { version = "1.0.104", features = ["std", "backtrace"] }
+crossterm = "0.29.0"
+ratatui = "0.30.2"
+rupture-agents = { version = "0.1.0", path = "../agents" }
+tokio = { version="1.53.1", features=["macros", "sync"]}
