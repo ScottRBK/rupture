@@ -1,13 +1,18 @@
 use anyhow::{Result}; 
-use rupture_cli::app:: {App, Event} ; 
+use rupture_cli::app:: {App, Event}; 
 use std::{
     sync::mpsc,
     thread,
 }; 
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
 
     let mut terminal = ratatui::init(); 
+    crossterm::execute!(
+        std::io::stdout(),
+        crossterm::event::EnableMouseCapture
+    )?;
 
     let (event_tx, event_rx) = mpsc::channel::<Event>();
     let input_tx = event_tx.clone(); 
@@ -15,21 +20,34 @@ fn main() -> Result<()> {
         let _ = handle_input_event(input_tx);
     });
 
-    let mut app = App { exit: false, agent_text: "Hello World".to_string()};
-
-    let app_result = app.run(&mut terminal, event_rx); 
+    let mut app = App::new();
+    let app_result = app.run(&mut terminal, event_rx).await;
+    let mouse_result = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::event::DisableMouseCapture
+    );
 
     ratatui::restore(); 
 
-    let _ = app_result; 
+    mouse_result?;
+    app_result?; 
 
     Ok(())
 }
 
 fn handle_input_event(tx: mpsc::Sender<Event>) -> Result <()> {
     loop {
-        if let crossterm::event::Event::Key(key_event) = crossterm::event::read()? {
-            tx.send(Event::UserInput(key_event))?;
+        match crossterm::event::read()? {
+            crossterm::event::Event::Key(key) => {
+                tx.send(Event::UserInput(key))?;
+            },
+            crossterm::event::Event::Mouse(mouse) => {
+                tx.send(Event::Mouse(mouse))?;
+            },
+            crossterm::event::Event::Resize(_, _) => {
+                tx.send(Event::Resize)?;
+            }
+            _ => {}
         }
     }
 }

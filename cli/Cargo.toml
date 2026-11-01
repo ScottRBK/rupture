@@ -6,6 +6,12 @@ edition = "2024"
 [dependencies]
 anyhow = { version = "1.0.104", features = ["std", "backtrace"] }
 crossterm = "0.29.0"
-ratatui = "0.30.2"
 rupture-agents = { version = "0.1.0", path = "../agents" }
 tokio = { version="1.53.1", features=["macros", "sync"]}
+ferox-ai = "0.1.2"
+ratatui = { version = "0.30.2", features =  ["unstable-rendered-line-info"]}
+ratatui-textarea = "0.9.2"
+reqwest = {version="0.13.5", features=["json"]}
+async-stream = "0.3.6"
+futures = "0.3.34"
+futures-core = "0.3.34"
