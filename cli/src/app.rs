@@ -1,9 +1,9 @@
 use anyhow::{ Result, Context };
 use crate::panel::Panels;
 use crate::client::text_prompt;
-use futures::stream::StreamExt;
+use futures::{Stream, StreamExt};
+use std::pin::Pin;
 use ratatui::{
-    DefaultTerminal,
     Frame,
     Terminal,
     backend::Backend,
@@ -15,12 +15,40 @@ use ratatui::{
 };
 use ratatui_textarea::{TextArea, WrapMode};
 use crossterm::event::{ MouseEvent, MouseEventKind, KeyEvent, KeyEventKind, KeyModifiers, KeyCode};
-use std::sync::mpsc;
+use tokio::sync::mpsc;
 
 pub enum Event {
     UserInput(KeyEvent),
     Mouse(MouseEvent),
     Resize,
+    TerminalInputFailure(std::io::Error),
+}
+
+impl Event {
+    fn is_submit(&self) -> bool {
+        match self {
+            Self::UserInput(key) => {
+                key.kind == KeyEventKind::Press 
+                    && key.code == KeyCode::Enter 
+                    && key.modifiers == KeyModifiers::NONE
+            }
+            _ => false,
+        }
+    }
+}
+
+type ResponseStream = Pin<Box<dyn Stream<Item = Result<String>> + Send>>;
+
+struct ActiveRequest {
+    response_index: usize,
+    stream: ResponseStream,
+}
+
+async fn next_response_chunk(active: &mut Option<ActiveRequest>) -> Option<Result<String>> {
+    match active {
+        Some(response) => response.stream.next().await,
+        None => std::future::pending().await,
+    }    
 }
 
 pub struct App {
@@ -52,24 +80,98 @@ impl App {
         }
     }
 
-    pub async fn run(
+    pub async fn run<B>(
         &mut self,
-        terminal: &mut DefaultTerminal,
+        terminal: &mut Terminal<B>,
         rx: mpsc::Receiver<Event>,
-    ) -> Result<()> {
+    ) -> Result<()> 
+    where 
+        B: Backend,
+        B::Error: std::error::Error + Send + Sync + 'static
+    {
+        self.run_with_response(terminal, rx, |prompt| Box::pin(text_prompt(prompt))).await
+    }
 
+    pub async fn run_with_response<B, F>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+        mut rx: mpsc::Receiver<Event>,
+        mut request: F,
+    ) -> Result <()>
+    where
+        B: Backend,
+        B::Error: std::error::Error + Send + Sync + 'static,
+        F: FnMut(String) -> ResponseStream,
+    {
+        let mut active: Option<ActiveRequest> = None; 
         self.redraw(terminal)?;
 
         while !self.exit {
+            tokio::select! {
+                event = rx.recv() => {
+                    let Some(event) = event else { break };
 
-            self.handle_event(rx.recv()?, terminal).await?;
+                    if event.is_submit() {
+                        self.submit_prompt(&mut active, &mut request);
+                    } else {
+                        self.handle_event(event ,terminal).await?;
+                    }
+                }
+                chunk = next_response_chunk(&mut active) => {
+                    self.handle_response_chunk(chunk, &mut active)?;
+                }
+            }
             self.redraw(terminal)?;
+            tokio::task::yield_now().await;
         }
 
         Ok(())
     }
 
-    /// Process one terminal event. The caller redraws after the state update.
+    fn submit_prompt<F>(&mut self, active: &mut Option<ActiveRequest>, request: &mut F)
+    where 
+        F: FnMut(String) -> ResponseStream,
+    {
+        if active.is_some() {
+            return;
+        }
+
+        let prompt = self.user_input.lines().join("\n");
+        if prompt.trim().is_empty() {
+            return;
+        }    
+
+        self.messages.push(prompt.clone());
+        self.messages.push(String::new());
+        self.user_input = Self::new_user_input();
+
+        *active = Some(ActiveRequest {
+            response_index: self.messages.len() - 1,
+            stream: request(prompt)
+        });
+    }
+
+    fn handle_response_chunk(
+        &mut self,
+        chunk: Option<Result<String>>,
+        active: &mut Option<ActiveRequest>, 
+    ) -> Result<()> {
+        match chunk {
+            Some(Ok(text)) => {
+                if let Some(response) = active {
+                    self.append_response_chunk(response.response_index, &text)?;
+                }
+            },
+            Some(Err(error)) => {
+                self.messages.push(format!("Response failed: {error:#}"));
+                *active = None;
+            },
+            None => *active = None,
+        }
+
+        Ok(())
+    }
+     
     pub async fn handle_event<B>(&mut self, event: Event, terminal: &mut Terminal<B>) -> Result<()>
     where
         B: Backend,
@@ -82,7 +184,10 @@ impl App {
                 MouseEventKind::ScrollDown => self.scroll_down(3),
                 _ => {}
             },
-            Event::Resize => {}
+            Event::Resize => {},
+            Event::TerminalInputFailure(error) => {
+                return Err(error).context("terminal input failed")
+            }
         }
         Ok(())
     }
@@ -168,7 +273,7 @@ impl App {
     pub async fn handle_key_event<B>(
         &mut self,
         key_event: KeyEvent,
-        terminal: &mut Terminal<B>,
+        _terminal: &mut Terminal<B>,
     ) -> Result<()>
     where
         B: Backend,
@@ -187,27 +292,7 @@ impl App {
             (KeyCode::Char('j'), KeyModifiers::CONTROL) => {
                 self.user_input.insert_newline();
             },
-            (KeyCode::Enter,KeyModifiers::NONE) =>{
-                let message = self.user_input.lines().join("\n");
-
-                if !message.trim().is_empty() {
-                    self.messages.push(message.clone());
-                }
-                
-                let stream = text_prompt(message).await;
-                futures::pin_mut!(stream);
-
-                self.messages.push(String::new());
-                let response_index = self.messages.len() - 1;
-
-                while let Some(chunk) = stream.next().await {
-                    self.append_response_chunk(response_index, &chunk?)?;
-                    self.redraw(terminal)?;
-                }
-
-                self.user_input = Self::new_user_input();
-
-            },
+            (KeyCode::Enter,KeyModifiers::NONE) => {},
             (KeyCode::PageUp, _) => self.scroll_up(5),
             (KeyCode::PageDown, _) => self.scroll_down(5),
             (KeyCode::End, _) => { self.follow_output = true; }

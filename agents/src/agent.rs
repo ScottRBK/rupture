@@ -10,7 +10,8 @@ use ferox_ai::{Gateway, models::{
     ReasoningEffort,
     Tool,
 }};
-use crate::errors::AgentError;
+use std::sync::Arc;
+use crate::error::AgentError;
 
 #[non_exhaustive]
 pub struct AgentConfig {
@@ -22,11 +23,26 @@ pub struct AgentConfig {
     pub tools: Option<Vec<Tool>>,
 }
 
+impl AgentConfig {
+    pub fn new(name: String, system_prompt: Option<String>, tools: Option<Vec<Tool>>,) -> Self {
+       Self {
+           name,
+           system_prompt: system_prompt.unwrap_or_default(),
+           tools,
+       } 
+    }
+}
+
 pub struct LlmConfig { 
     // Large Language Model that is to be used for the Agent
-    model: Model,
+    pub model: Model,
     // The reasoning effor that will be used by the large language model for agent requests
-    reasoning_effort: ReasoningEffort,
+    pub reasoning_effort: ReasoningEffort,
+}
+
+#[non_exhaustive]
+pub struct AgentChunkResponse {
+    pub chunk_text: String,
 }
 
 #[non_exhaustive]
@@ -39,26 +55,20 @@ pub struct AgentSession<P>
     // The Ferox large language model configuration that will be used for the session 
     pub llm_config: LlmConfig,
     // The ferox gateway that will be used to pass data to the Large Language Model
-    gateway: ferox_ai::Gateway<P>,
+    gateway: Arc<Gateway<P>>,
     // List of messages that are in the session
     messages: Vec<Message>,
 }
 
-
-#[non_exhaustive]
-pub struct AgentChunkResponse {
-    pub chunk_text: String,
-}
-
 impl<P> AgentSession<P> 
 where 
-    P: ferox_ai::LlmProvider
+    P: ferox_ai::LlmProvider + Send + Sync + 'static,
 {
     // Creates a new agent session
     pub fn new(
         agent_config: AgentConfig,
         llm_config: LlmConfig,
-        gateway: Gateway<P>,
+        gateway: Arc<Gateway<P>>,
         messages: Vec<Message>,
     ) -> Self {
         Self {
@@ -70,8 +80,8 @@ where
         }
     }
 
-    pub fn text_prompt(&mut self, prompt: &str) -> 
-    impl Stream<Item = Result<AgentChunkResponse, AgentError>> {
+    pub fn text_prompt(mut self, prompt: String) -> 
+    impl Stream<Item = Result<AgentChunkResponse, AgentError>> + Send + 'static {
         try_stream! {
 
             self.messages.push(Message::User{ content: prompt.into() });

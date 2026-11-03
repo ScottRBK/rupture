@@ -67,8 +67,8 @@ rupture/
     ├── src/
     │   ├── main.rs
     │   ├── lib.rs
-    │   ├── client.rs
-    │   ├── model.rs
+    │   ├── app.rs
+    │   ├── panel.rs
     │   └── error.rs
     └── tests/
         └── client.rs

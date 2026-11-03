@@ -7,3 +7,4 @@ pub enum AgentError {
     #[error("llm provider error: {0}")]
     ProviderError(#[from] GatewayError)
 }
+

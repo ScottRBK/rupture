@@ -5,7 +5,7 @@ use futures_core::Stream;
 use reqwest::Client;
 use std::collections::HashMap;
 
-pub async fn text_prompt(prompt: String) -> impl Stream<Item = Result<String>> + Send + 'static {
+pub fn text_prompt(prompt: String) -> impl Stream<Item = Result<String>> + Send + 'static {
     try_stream! {
         let client = Client::new();
 
@@ -49,4 +49,3 @@ pub async fn text_prompt(prompt: String) -> impl Stream<Item = Result<String>> +
         }
     }
 }
-

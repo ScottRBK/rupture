@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ferox-ai = "0.1.1"
+ferox-ai = "0.1.2"
 futures-core = "0.3.34"
 async-stream = "0.3.6"
 thiserror = "2.0.20"

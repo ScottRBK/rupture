@@ -1,9 +1,7 @@
 use anyhow::{Result}; 
 use rupture_cli::app:: {App, Event}; 
-use std::{
-    sync::mpsc,
-    thread,
-}; 
+use std::thread;
+use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -14,10 +12,10 @@ async fn main() -> Result<()> {
         crossterm::event::EnableMouseCapture
     )?;
 
-    let (event_tx, event_rx) = mpsc::channel::<Event>();
-    let input_tx = event_tx.clone(); 
+    let (event_tx, event_rx) = mpsc::channel::<Event>(16);
+
     thread::spawn( move || {
-        let _ = handle_input_event(input_tx);
+        let _ = handle_input_event(event_tx);
     });
 
     let mut app = App::new();
@@ -37,15 +35,23 @@ async fn main() -> Result<()> {
 
 fn handle_input_event(tx: mpsc::Sender<Event>) -> Result <()> {
     loop {
-        match crossterm::event::read()? {
+        let event = match crossterm::event::read() {
+            Ok(event) => event,
+            Err(error) => {
+                let _ = tx.blocking_send(Event::TerminalInputFailure(error));
+                return Ok(())
+            }
+        };
+         
+        match event {
             crossterm::event::Event::Key(key) => {
-                tx.send(Event::UserInput(key))?;
+                tx.blocking_send(Event::UserInput(key))?;
             },
             crossterm::event::Event::Mouse(mouse) => {
-                tx.send(Event::Mouse(mouse))?;
+                tx.blocking_send(Event::Mouse(mouse))?;
             },
             crossterm::event::Event::Resize(_, _) => {
-                tx.send(Event::Resize)?;
+                tx.blocking_send(Event::Resize)?;
             }
             _ => {}
         }
