@@ -44,9 +44,6 @@ rupture/
 │   │   ├── agent.rs
 │   │   ├── model.rs
 │   │   ├── error.rs
-│   │   └── adapters/
-│   │       ├── mod.rs
-│   │       └── ferox.rs
 │   └── tests/
 │       └── agent.rs
 ├── server/
@@ -55,6 +52,7 @@ rupture/
 │   │   ├── main.rs
 │   │   ├── lib.rs
 │   │   ├── error.rs
+│   │   ├── settings.rs
 │   │   └── routes/
 │   │       ├── mod.rs
 │   │       ├── api.rs

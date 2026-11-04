@@ -8,14 +8,11 @@ use axum::{
     routing::{get, post},
 };
 use ferox_ai::{
-    Gateway,
     models::{Message, Model},
-    openai_compatible::OpenAiCompatibleClient,
 };
-use futures_util::stream::{Stream, TryStreamExt};
-use rupture_agents::{AgentChunkResponse, AgentConfig, AgentSession, LlmConfig};
-use serde::Deserialize;
-use std::{convert::Infallible, sync::Arc, time::Duration};
+use futures_util::stream::{Stream};
+use rupture_agents::{AgentConfig, AgentSession, LlmConfig};
+use std::{sync::Arc};
 use tokio_stream::StreamExt;
 
 pub fn router(state: AppState) -> Router<()> {
