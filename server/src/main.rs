@@ -1,10 +1,13 @@
 use anyhow::Result;
 use rupture_server::app::App;
+use rupture_server::settings::Settings;
 
 #[tokio::main]
 async fn main() -> Result<()> {
 
-    let app = App::new("0.0.0.0:3000".to_string());
+    let settings = Settings::new()?;
+
+    let app = App::new(format!("{}:{}", settings.host, settings.port));
 
     app.start().await?;
 

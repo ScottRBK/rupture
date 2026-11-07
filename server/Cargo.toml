@@ -12,3 +12,4 @@ rupture-agents = { version = "0.1.0", path = "../agents" }
 futures-util = "0.3.34"
 tokio-stream = "0.1.19"
 serde = "1.0.229"
+toml = "1.2.1"

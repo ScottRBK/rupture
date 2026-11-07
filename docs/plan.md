@@ -7,3 +7,4 @@
 - [ ] extensions / plugins
 - [ ] multiple provider 
 - [ ] support additional inference modalities
+- [ ] executeable and runtime distribution
