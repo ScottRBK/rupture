@@ -1,11 +1,12 @@
-use anyhow::Result;
+use anyhow::{Result, Context};
 use async_stream::try_stream;
 use futures::stream::StreamExt;
 use futures_core::Stream;
 use reqwest::Client;
+use rupture_contracts::stream_events::TextStreamEvent;
 use std::collections::HashMap;
 
-pub fn text_prompt(prompt: String) -> impl Stream<Item = Result<String>> + Send + 'static {
+pub fn text_prompt(prompt: String) -> impl Stream<Item = Result<TextStreamEvent>> + Send + 'static {
     try_stream! {
         let client = Client::new();
 
@@ -23,6 +24,7 @@ pub fn text_prompt(prompt: String) -> impl Stream<Item = Result<String>> + Send 
         let mut event_data = String::new();
 
         while let Some(chunk) = stream.next().await {
+
             buffer.extend_from_slice(&chunk?);
             while let Some(n1) = buffer.iter().position(|&b| b == b'\n') {
                 let line_bytes: Vec<u8> = buffer.drain(..=n1).collect();
@@ -32,9 +34,11 @@ pub fn text_prompt(prompt: String) -> impl Stream<Item = Result<String>> + Send 
                 if line.is_empty() {
                     if !event_data.is_empty() {
                         event_data.pop();
-                        yield std::mem::take(&mut event_data);
+                        let event: TextStreamEvent = serde_json::from_str(&event_data)
+                            .context("invalid event JSON from server")?;
+                        yield event;
                     }
-
+                    std::mem::take(&mut event_data);
                     continue
                 }
 

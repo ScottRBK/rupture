@@ -9,7 +9,9 @@ axum = "0.8.9"
 tokio = {version = "1.53.1", features=["macros", "rt-multi-thread"]}
 ferox-ai = "0.1.2"
 rupture-agents = { version = "0.1.0", path = "../agents" }
+rupture-contracts = { version = "0.1.0", path = "../contracts"}
 futures-util = "0.3.34"
 tokio-stream = "0.1.19"
 serde = "1.0.229"
 toml = "1.2.1"
+serde_json = "1.0.154"

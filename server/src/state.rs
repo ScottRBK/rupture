@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use ferox_ai::{
     Gateway,
-    openai_compatible::{OpenAiCompatibleClient, OpenAiCompatibleClientBuilder},
+    openai_compatible::OpenAiCompatibleClient,
 };
 use std::{collections::HashMap, sync::Arc};
 
@@ -25,7 +25,7 @@ impl AppState {
         let mut providers = HashMap::new();
 
         let client = OpenAiCompatibleClient::builder()
-            .base_url("http://192.168.1.201:8018/v1")
+            .base_url("http://192.168.1.201:8000/v1")
             .build()
             .context("failed to build OpenAI-compatible client")?;
 

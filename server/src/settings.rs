@@ -14,6 +14,7 @@ macro_rules! define_settings {
     ( $( $name:ident : $env:expr, $default:expr ; )+ ) => {
         #[derive(Deserialize, Serialize, Debug, Clone)]
         #[serde(default)]
+        #[allow(unused_must_use)]
         pub struct Settings {
             $( pub $name: String, )*
         }
@@ -52,7 +53,9 @@ macro_rules! define_settings {
                     .unwrap_or_else(|_| DEFAULT_SETTINGS_FILE.to_string());
 
                 if !std::path::Path::new(&path).exists() {
-                    Self::write_settings_file(&path);
+                    if let Err(error) = Self::write_settings_file(&path) {
+                        eprintln!("warning: could not create settings file {path}: {error}");
+                    }
                 }
 
                 Self::load_from(&path)

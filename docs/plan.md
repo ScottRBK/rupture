@@ -8,3 +8,4 @@
 - [ ] multiple provider 
 - [ ] support additional inference modalities
 - [ ] executeable and runtime distribution
+- [ ] add token counts to agents response

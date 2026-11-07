@@ -9,6 +9,9 @@ This workspace will contain:
 - Ports - These are Traits what i would have previously defined as Protcols in Python, they express 
 what the application needs or exposes.
 - Adapters - These are concrete imple─lemtations of these traits
+- Contracts - The wire messages shared between adapters (e.g. the server and CLI). These are pure
+data shapes with serde derives - never domain types, never traits. They live in the `contracts`
+crate, which depends on nothing but serde. The domain (`agents`) must never depend on `contracts`.
 - Services - Business uses cases that depend on the protocols - for this solution which is quite 
 small then this is just the `gateway.rs` which describes the domain logic for interacting with LLMs
 - Routes - Inbound adapters that translate external input into application calls - for this libary 
@@ -37,6 +40,13 @@ rupture/
 ├── docs/
 │   └── design/
 │       └── architecture.md
+├── contracts/
+│   ├── Cargo.toml
+│   ├── src/
+│   │   ├── lib.rs
+│   │   └── stream_event.rs
+│   └── tests/
+│       └── stream_event.rs
 ├── agents/
 │   ├── Cargo.toml
 │   ├── src/

@@ -3,7 +3,6 @@ use futures_core::Stream;
 use futures::stream::StreamExt;
 use async_stream::try_stream;
 use ferox_ai::{Gateway, models::{
-    CompletionChunk,
     CompletionRequest,
     Message,
     Model,
@@ -43,6 +42,8 @@ pub struct LlmConfig {
 #[non_exhaustive]
 pub struct AgentChunkResponse {
     pub chunk_text: String,
+    pub token_count: i32,
+    pub is_reasoning: bool,
 }
 
 #[non_exhaustive]
@@ -97,8 +98,13 @@ where
             let stream = self.gateway.stream(request).await?;
             futures::pin_mut!(stream); 
             while let Some(chunk) = stream.next().await {
+                // TODO: Handle reasoning properly
                 if let Some(text) = chunk?.text {
-                    yield AgentChunkResponse { chunk_text: text }
+                    yield AgentChunkResponse { 
+                        chunk_text: text,
+                        token_count: 0, // TODO: manage token counts
+                        is_reasoning: false 
+                    }
                 }
             }
         }

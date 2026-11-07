@@ -12,6 +12,7 @@ use ferox_ai::{
 };
 use futures_util::stream::{Stream};
 use rupture_agents::{AgentConfig, AgentSession, LlmConfig};
+use rupture_contracts::stream_events::TextStreamEvent;
 use std::{sync::Arc};
 use tokio_stream::StreamExt;
 
@@ -49,43 +50,41 @@ async fn prompt(
 
     let prompt = request.prompt;
 
-    let model = Model::new("qwen3.8-flash-next-stock", None, None);
+    let model = Model::new("glm-5.3-flash", None, None);
 
     let llm_config = LlmConfig {
         model,
         reasoning_effort: ferox_ai::models::ReasoningEffort::None,
     };
 
-    let mut messages: Vec<Message> = Vec::new();
+    let messages: Vec<Message> = Vec::new();
 
     let agent_config = AgentConfig::new("API Agent".to_string(), None, None);
 
     let session = AgentSession::new(agent_config, llm_config, gateway, messages);
 
     let stream = session.text_prompt(prompt).map(|result| match result {
-        Ok(chunk) => Ok(Event::default().data(chunk.chunk_text)),
+        Ok(chunk) => Ok(text_to_sse(&TextStreamEvent::Chunk {
+            text: chunk.chunk_text,
+            token_count: chunk.token_count,
+            is_reasoning: chunk.is_reasoning,
+        })),
         Err(error) => {
             eprintln!("agent stream failed: {error:#}");
-
-            Ok(Event::default()
-                .event("error")
-                .data("The agent failed to generate a response"))
+            Ok(text_to_sse(&TextStreamEvent::Error {
+                message: "The agent failed to generate a response".into(),
+            }))
         }
     });
 
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
-fn handle_sse_line(line: &str) -> Option<Result<String>> {
-    let line = line.trim();
+fn text_to_sse(event: &TextStreamEvent) -> Event {
+    let payload = serde_json::to_string(event)
+        .unwrap_or_else(|_| r#"{"type":"error","message":"internal serialization failure"}"#.into());
 
-    if line.is_empty() {
-        return None;
-    }
-
-    let data = line.strip_prefix("data:")?.trim_start();
-    Some(Ok(data.to_string()))
-
+    Event::default().data(payload)
 }
 
 #[derive(serde::Deserialize)]

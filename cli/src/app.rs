@@ -14,6 +14,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Widget, Wrap}
 };
 use ratatui_textarea::{TextArea, WrapMode};
+use rupture_contracts::stream_events::TextStreamEvent;
 use crossterm::event::{ MouseEvent, MouseEventKind, KeyEvent, KeyEventKind, KeyModifiers, KeyCode};
 use tokio::sync::mpsc;
 
@@ -37,14 +38,14 @@ impl Event {
     }
 }
 
-type ResponseStream = Pin<Box<dyn Stream<Item = Result<String>> + Send>>;
+type ResponseStream = Pin<Box<dyn Stream<Item = Result<TextStreamEvent>> + Send>>;
 
 struct ActiveRequest {
     response_index: usize,
     stream: ResponseStream,
 }
 
-async fn next_response_chunk(active: &mut Option<ActiveRequest>) -> Option<Result<String>> {
+async fn next_response_chunk(active: &mut Option<ActiveRequest>) -> Option<Result<TextStreamEvent>> {
     match active {
         Some(response) => response.stream.next().await,
         None => std::future::pending().await,
@@ -153,14 +154,18 @@ impl App {
 
     fn handle_response_chunk(
         &mut self,
-        chunk: Option<Result<String>>,
+        chunk: Option<Result<TextStreamEvent>>,
         active: &mut Option<ActiveRequest>, 
     ) -> Result<()> {
         match chunk {
-            Some(Ok(text)) => {
+            Some(Ok(TextStreamEvent::Chunk { text, .. })) => {
                 if let Some(response) = active {
                     self.append_response_chunk(response.response_index, &text)?;
                 }
+            },
+            Some(Ok(TextStreamEvent::Error { message })) => {
+                self.messages.push(format!("Server error: {message}"));
+                *active = None;
             },
             Some(Err(error)) => {
                 self.messages.push(format!("Response failed: {error:#}"));
