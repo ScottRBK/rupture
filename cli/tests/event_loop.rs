@@ -1,7 +1,7 @@
 mod support;
 
 use crossterm::event::KeyCode;
-use support::{Harness, terminal_key};
+use support::{Harness, chunk, terminal_key};
 
 #[tokio::test]
 async fn page_up_and_quit_work_before_response_completion() {
@@ -10,7 +10,7 @@ async fn page_up_and_quit_work_before_response_completion() {
     app.submit("question").await;
     let rows = (1..=30).map(|n| format!("row-{n:02}"))
         .collect::<Vec<_>>().join("\n");
-    app.sources[0].send(Ok(rows)).await.unwrap();
+    app.sources[0].send(Ok(chunk(rows))).await.unwrap();
     app.wait_screen(|screen| screen.contains("row-30")).await;
 
     // Act: no completion or additional response chunk is sent.
@@ -32,7 +32,7 @@ async fn draft_survives_completion_and_becomes_the_next_request() {
     // Act: draft and try to submit while the first response is still open.
     app.type_text("draft").await;
     app.send(terminal_key(KeyCode::Enter)).await;
-    app.sources[0].send(Ok("Hello".into())).await.unwrap();
+    app.sources[0].send(Ok(chunk("Hello"))).await.unwrap();
     app.wait_screen(|screen| screen.contains("Hello") && screen.contains("draft")).await;
     drop(app.sources.remove(0));
     tokio::time::timeout(support::DEADLINE, app.closed.recv()).await.unwrap().unwrap();
@@ -66,7 +66,7 @@ async fn failure_keeps_partial_text_and_draft_and_allows_another_request() {
     // Arrange.
     let mut app = Harness::new();
     app.submit("question").await;
-    app.sources[0].send(Ok("Partial answer".into())).await.unwrap();
+    app.sources[0].send(Ok(chunk("Partial answer"))).await.unwrap();
     app.wait_screen(|screen| screen.contains("Partial answer")).await;
     app.type_text("retry").await;
     app.wait_screen(|screen| screen.contains("retry")).await;
@@ -84,6 +84,33 @@ async fn failure_keeps_partial_text_and_draft_and_allows_another_request() {
     // Assert: failure is visible, old text survives, and the next request is accepted.
     assert!(failed.contains("Partial answer"), "{failed}");
     assert!(failed.contains("retry"), "{failed}");
+    assert_eq!(retry, "retry");
+}
+
+#[tokio::test]
+async fn server_error_event_is_labelled_and_frees_the_request() {
+    use rupture_contracts::stream_events::TextStreamEvent;
+    // Arrange: some content arrives, then the server reports its own failure.
+    let mut app = Harness::new();
+    app.submit("question").await;
+    app.sources[0].send(Ok(chunk("Partial answer"))).await.unwrap();
+    app.wait_screen(|screen| screen.contains("Partial answer")).await;
+
+    // Act: the failure arrives as an event on the still-open stream.
+    app.sources[0]
+        .send(Ok(TextStreamEvent::Error { message: "overloaded".into() }))
+        .await.unwrap();
+    let failed = app.wait_screen(|screen| {
+        screen.contains("Server error") && screen.contains("overloaded")
+    }).await;
+    app.type_text("retry").await;
+    app.send(terminal_key(KeyCode::Enter)).await;
+    let retry = tokio::time::timeout(support::DEADLINE, app.requests.recv())
+        .await.unwrap().unwrap();
+    app.finish().await.unwrap();
+
+    // Assert: the error is separated from the story text and a new request is accepted.
+    assert!(failed.contains("Partial answer"), "{failed}");
     assert_eq!(retry, "retry");
 }
 
@@ -109,10 +136,10 @@ async fn resize_is_processed_during_an_unfinished_response() {
     // Arrange: initial text fits the wide panel but must wrap in the narrow panel.
     let mut app = Harness::new();
     app.submit("question").await;
-    app.sources[0].send(Ok(concat!(
+    app.sources[0].send(Ok(chunk(concat!(
         "0123456789ABCDEFGHIJabcdefghijKLMNOPQRST",
         "klmnopqrstUVWXYZ1234uvwxyz5678THE-END!!!",
-    ).into())).await.unwrap();
+    )))).await.unwrap();
     app.wait_screen(|screen| screen.contains("END!!!")).await;
 
     // Act: change the terminal's reported size and forward its real resize event.
@@ -140,13 +167,13 @@ async fn wheel_scrolling_holds_then_resumes_following_during_generation() {
     app.submit("question").await;
     let rows = (1..=30).map(|n| format!("row-{n:02}"))
         .collect::<Vec<_>>().join("\n");
-    app.sources[0].send(Ok(rows)).await.unwrap();
+    app.sources[0].send(Ok(chunk(rows))).await.unwrap();
     app.wait_screen(|screen| screen.contains("row-30")).await;
 
     // Act and assert: wheel up, then consume a chunk without moving the reading view.
     app.send(wheel(MouseEventKind::ScrollUp)).await;
     let reading = app.wait_screen(|screen| screen.contains("row-22")).await;
-    app.sources[0].send(Ok("\nLATEST".into())).await.unwrap();
+    app.sources[0].send(Ok(chunk("\nLATEST"))).await.unwrap();
     tokio::time::timeout(support::DEADLINE, app.frames.changed()).await.unwrap().unwrap();
     assert_eq!(support::text(&app.frames.borrow_and_update()), reading);
 
@@ -154,7 +181,7 @@ async fn wheel_scrolling_holds_then_resumes_following_during_generation() {
     app.send(wheel(MouseEventKind::ScrollDown)).await;
     app.send(wheel(MouseEventKind::ScrollDown)).await;
     app.wait_screen(|screen| screen.contains("LATEST")).await;
-    app.sources[0].send(Ok("\nNEWEST".into())).await.unwrap();
+    app.sources[0].send(Ok(chunk("\nNEWEST"))).await.unwrap();
     let latest = app.wait_screen(|screen| screen.contains("NEWEST")).await;
     app.finish().await.unwrap();
     assert!(latest.contains("LATEST"), "{latest}");
@@ -168,7 +195,7 @@ async fn quit_still_works_when_the_response_producer_is_busy() {
     let source = app.sources[0].clone();
     let producer = tokio::spawn(async move {
         for index in 0..100_000 {
-            if source.send(Ok("x".into())).await.is_err() { return index; }
+            if source.send(Ok(chunk("x"))).await.is_err() { return index; }
         }
         100_000
     });
@@ -250,8 +277,8 @@ async fn input_channel_closure_stops_the_loop_and_drops_the_response() {
 async fn always_ready_stream_does_not_starve_input_on_the_single_thread_runtime() {
     use futures::{StreamExt, stream};
     // Arrange: unlike the bounded-channel source, this stream never has to wait.
-    let stream = stream::iter([Ok("HOT".to_owned())])
-        .chain(stream::repeat_with(|| Ok(String::new())));
+    let stream = stream::iter([Ok(chunk("HOT"))])
+        .chain(stream::repeat_with(|| Ok(chunk(""))));
     let mut app = Harness::with_stream(Box::pin(stream));
     app.submit("question").await;
     app.wait_screen(|screen| screen.contains("HOT")).await;

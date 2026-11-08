@@ -11,7 +11,14 @@ use ratatui::{
 };
 use rupture_cli::app::{App, Event};
 
-type ResponseStream = std::pin::Pin<Box<dyn futures::Stream<Item = Result<String>> + Send>>;
+use rupture_contracts::stream_events::TextStreamEvent;
+
+type ResponseStream = std::pin::Pin<Box<dyn futures::Stream<Item = Result<TextStreamEvent>> + Send>>;
+
+/// Convenience constructor so tests can describe content without repeating the wire shape.
+pub fn chunk(text: impl Into<String>) -> TextStreamEvent {
+    TextStreamEvent::Chunk { text: text.into(), token_count: 0, is_reasoning: false }
+}
 
 struct ObservedSource {
     stream: ResponseStream,
@@ -19,7 +26,7 @@ struct ObservedSource {
 }
 
 impl futures::Stream for ObservedSource {
-    type Item = Result<String>;
+    type Item = Result<TextStreamEvent>;
 
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
@@ -100,7 +107,7 @@ pub fn quit() -> Event {
 
 pub struct Harness {
     pub tx: mpsc::Sender<Event>,
-    pub sources: Vec<mpsc::Sender<Result<String>>>,
+    pub sources: Vec<mpsc::Sender<Result<TextStreamEvent>>>,
     pub requests: mpsc::UnboundedReceiver<String>,
     pub closed: mpsc::UnboundedReceiver<()>,
     pub frames: watch::Receiver<Buffer>,
