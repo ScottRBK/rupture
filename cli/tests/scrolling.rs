@@ -1,6 +1,22 @@
 use crossterm::event::{MouseEvent, MouseEventKind, KeyModifiers};
 use ratatui::{Terminal, backend::TestBackend};
-use rupture_cli::app::{App, Event};
+use rupture_cli::app::{App, Entry, Event};
+
+/// The text of an entry that grows while a response streams in: the answer
+/// of an assistant entry, or the whole text of a user or error entry.
+fn text_mut(entry: &mut Entry) -> &mut String {
+    match entry {
+        Entry::User(text) | Entry::Error(text) => text,
+        Entry::Assistant { answer, .. } => answer,
+    }
+}
+
+fn assistant(answer: &str) -> Entry {
+    Entry::Assistant {
+        reasoning: String::new(),
+        answer: answer.to_string(),
+    }
+}
 
 type TestTerminal = Terminal<TestBackend>;
 
@@ -22,12 +38,12 @@ fn screen(terminal: &TestTerminal) -> String {
 
 fn conversation() -> App {
     let mut app = App::new();
-    app.messages.push(
+    app.messages.push(Entry::User(
         (1..=20)
             .map(|row| format!("row-{row:02}"))
             .collect::<Vec<_>>()
             .join("\n"),
-    );
+    ));
     app
 }
 
@@ -68,13 +84,13 @@ async fn wheel_down_returns_to_newer_text_after_wheel_up() {
 
 #[test]
 fn chunk_without_newline_is_visible_before_response_finishes() {
-    // Arrange: create the assistant entry, as the prompt handler does.
+    // Arrange: create the assistant entry, as the first chunk would.
     let mut terminal = terminal(30, 15);
     let mut app = App::new();
-    app.messages.push(String::new());
+    app.messages.push(assistant(""));
 
     // Act: append a single chunk without a newline or completion event.
-    app.append_response_chunk(0, "Hello").unwrap();
+    text_mut(&mut app.messages[0]).push_str("Hello");
     app.redraw(&mut terminal).unwrap();
 
     // Assert: inspect real rendered output, not the stored message or scroll offset.
@@ -99,9 +115,9 @@ fn successive_chunks_extend_one_response_and_follow_the_latest_text() {
     app.redraw(&mut terminal).unwrap();
 
     // Act: append chunks, including one with no newline.
-    app.append_response_chunk(0, "\nHello").unwrap();
+    text_mut(&mut app.messages[0]).push_str("\nHello");
     app.redraw(&mut terminal).unwrap();
-    app.append_response_chunk(0, " there").unwrap();
+    text_mut(&mut app.messages[0]).push_str(" there");
     app.redraw(&mut terminal).unwrap();
 
     // Assert: chunks stay on one line, appear once, and displace old text.
@@ -122,7 +138,7 @@ async fn page_up_holds_reading_position_when_a_chunk_arrives() {
     assert!(before.contains("row-10"), "{before}");
 
     // Act.
-    app.append_response_chunk(0, "\nLATEST").unwrap();
+    text_mut(&mut app.messages[0]).push_str("\nLATEST");
     app.redraw(&mut terminal).unwrap();
 
     // Assert: append does not pull the reader back to the bottom.
@@ -140,7 +156,7 @@ async fn wheel_up_holds_reading_position_when_a_chunk_arrives() {
     assert!(before.contains("row-12"), "{before}");
 
     // Act.
-    app.append_response_chunk(0, "\nLATEST").unwrap();
+    text_mut(&mut app.messages[0]).push_str("\nLATEST");
     app.redraw(&mut terminal).unwrap();
 
     // Assert.
@@ -158,7 +174,7 @@ async fn page_down_to_bottom_resumes_following() {
 
     // Act.
     dispatch(&mut app, &mut terminal, key(KeyCode::PageDown)).await;
-    app.append_response_chunk(0, "\nLATEST").unwrap();
+    text_mut(&mut app.messages[0]).push_str("\nLATEST");
     app.redraw(&mut terminal).unwrap();
 
     // Assert.
@@ -176,7 +192,7 @@ async fn wheel_down_to_bottom_resumes_following() {
 
     // Act.
     dispatch(&mut app, &mut terminal, wheel(MouseEventKind::ScrollDown)).await;
-    app.append_response_chunk(0, "\nLATEST").unwrap();
+    text_mut(&mut app.messages[0]).push_str("\nLATEST");
     app.redraw(&mut terminal).unwrap();
 
     // Assert.
@@ -196,7 +212,7 @@ async fn end_jumps_to_latest_and_resumes_following() {
     // Act.
     dispatch(&mut app, &mut terminal, key(KeyCode::End)).await;
     let after_end = screen(&terminal);
-    app.append_response_chunk(0, "\nLATEST").unwrap();
+    text_mut(&mut app.messages[0]).push_str("\nLATEST");
     app.redraw(&mut terminal).unwrap();
 
     // Assert: both the immediate jump and subsequent following work.
@@ -236,7 +252,7 @@ async fn no_op_scroll_on_short_content_does_not_disable_following() {
     // Arrange.
     let mut terminal = terminal(30, 15);
     let mut app = App::new();
-    app.messages.push("Hello".into());
+    app.messages.push(Entry::User("Hello".to_string()));
     app.redraw(&mut terminal).unwrap();
     let before = screen(&terminal);
 
@@ -252,8 +268,8 @@ async fn no_op_scroll_on_short_content_does_not_disable_following() {
     }
 
     // Act and assert: later output must still follow automatically.
-    app.append_response_chunk(0, "\none\ntwo\nthree\nfour\nfive\nsix\nLATEST")
-        .unwrap();
+    text_mut(&mut app.messages[0])
+        .push_str("\none\ntwo\nthree\nfour\nfive\nsix\nLATEST");
     app.redraw(&mut terminal).unwrap();
     let visible = screen(&terminal);
     assert!(visible.contains("LATEST"), "{visible}");
@@ -261,10 +277,10 @@ async fn no_op_scroll_on_short_content_does_not_disable_following() {
 
 fn wrapped_response() -> App {
     let mut app = App::new();
-    app.messages.push(concat!(
+    app.messages.push(assistant(concat!(
         "0123456789ABCDEFGHIJabcdefghijKLMNOPQRST",
         "klmnopqrstUVWXYZ1234uvwxyz5678THE-END!!!",
-    ).into());
+    )));
     app
 }
 
@@ -323,7 +339,7 @@ async fn tiny_and_empty_panels_recover_after_resize() {
     // Arrange.
     let mut terminal = terminal(0, 0);
     let mut app = App::new();
-    app.messages.push("Hello\nworld".into());
+    app.messages.push(Entry::User("Hello\nworld".to_string()));
 
     // Act: exercise panels with no usable inner area, then restore the size.
     for (width, height) in [(0, 0), (1, 1), (5, 5), (30, 15)] {
@@ -342,9 +358,9 @@ fn natural_word_wrapping_keeps_the_latest_word_visible() {
     // Arrange.
     let mut terminal = terminal(16, 15);
     let mut app = App::new();
-    app.messages.push(
-        "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda omega".into(),
-    );
+    app.messages.push(Entry::User(
+        "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda omega".to_string(),
+    ));
 
     // Act.
     app.redraw(&mut terminal).unwrap();
@@ -360,7 +376,10 @@ fn wide_unicode_and_explicit_newlines_keep_the_tail_visible() {
     // Arrange: each five-character CJK group occupies ten terminal columns.
     let mut terminal = terminal(16, 15);
     let mut app = App::new();
-    app.messages.push("你好世界啊".repeat(7) + "\nEND");
+    app.messages.push(Entry::User(format!(
+        "{}\nEND",
+        "你好世界啊".repeat(7)
+    )));
 
     // Act.
     app.redraw(&mut terminal).unwrap();
@@ -415,28 +434,19 @@ async fn key_release_does_not_scroll_the_conversation() {
 }
 
 #[test]
-fn appending_to_a_missing_response_reports_an_error() {
-    // Arrange.
-    let mut app = App::new();
-
-    // Act.
-    let result = app.append_response_chunk(0, "Hello");
-
-    // Assert: an invalid response index must not panic or silently discard text.
-    assert!(result.is_err());
-}
-
-#[test]
-fn chunks_extend_the_assistant_entry_without_changing_the_user_message() {
-    // Arrange: the response is not the first conversation entry.
+fn answer_renders_as_its_own_message_next_to_the_user_message() {
+    // Arrange: a question and an answer, as chunk routing produces them.
     let mut terminal = terminal(30, 15);
     let mut app = App::new();
-    app.messages = vec!["Question".into(), String::new()];
+    app.messages = vec![
+        Entry::User("Question".to_string()),
+        assistant(""),
+    ];
 
     // Act.
-    app.append_response_chunk(1, "Hel").unwrap();
+    text_mut(&mut app.messages[1]).push_str("Hel");
     app.redraw(&mut terminal).unwrap();
-    app.append_response_chunk(1, "lo").unwrap();
+    text_mut(&mut app.messages[1]).push_str("lo");
     app.redraw(&mut terminal).unwrap();
 
     // Assert: user and assistant stay on separate rows, with no duplicate response.

@@ -10,7 +10,7 @@ use ratatui::{
     layout::{Alignment}, 
     prelude::{Buffer, Rect}, 
     style::{ Style, Stylize }, 
-    text::{Text}, 
+    text::{Line, Text}, 
     widgets::{Block, Borders, Paragraph, Widget, Wrap}
 };
 use ratatui_textarea::{TextArea, WrapMode};
@@ -40,21 +40,24 @@ impl Event {
 
 type ResponseStream = Pin<Box<dyn Stream<Item = Result<TextStreamEvent>> + Send>>;
 
-struct ActiveRequest {
-    response_index: usize,
-    stream: ResponseStream,
-}
 
-async fn next_response_chunk(active: &mut Option<ActiveRequest>) -> Option<Result<TextStreamEvent>> {
-    match active {
-        Some(response) => response.stream.next().await,
+
+async fn next_response_chunk(stream: &mut Option<ResponseStream>) -> Option<Result<TextStreamEvent>> {
+    match stream {
+        Some(stream) => stream.next().await,
         None => std::future::pending().await,
     }    
 }
 
+
+pub enum Entry {
+    User(String),
+    Assistant { reasoning: String, answer: String },
+    Error(String),
+}
 pub struct App {
     pub exit: bool,
-    pub messages: Vec<String>,
+    pub messages: Vec<Entry>,
     pub user_input: TextArea<'static>,
     pub scroll_y: u16, 
     pub max_scroll_y: u16,
@@ -104,7 +107,7 @@ impl App {
         B::Error: std::error::Error + Send + Sync + 'static,
         F: FnMut(String) -> ResponseStream,
     {
-        let mut active: Option<ActiveRequest> = None; 
+        let mut stream: Option<ResponseStream> = None; 
         self.redraw(terminal)?;
 
         while !self.exit {
@@ -113,13 +116,13 @@ impl App {
                     let Some(event) = event else { break };
 
                     if event.is_submit() {
-                        self.submit_prompt(&mut active, &mut request);
+                        self.submit_prompt(&mut stream, &mut request);
                     } else {
                         self.handle_event(event ,terminal).await?;
                     }
                 }
-                chunk = next_response_chunk(&mut active) => {
-                    self.handle_response_chunk(chunk, &mut active)?;
+                chunk = next_response_chunk(&mut stream) => {
+                    self.handle_response_chunk(chunk, &mut stream)?;
                 }
             }
             self.redraw(terminal)?;
@@ -129,11 +132,11 @@ impl App {
         Ok(())
     }
 
-    fn submit_prompt<F>(&mut self, active: &mut Option<ActiveRequest>, request: &mut F)
+    fn submit_prompt<F>(&mut self, stream: &mut Option<ResponseStream>, request: &mut F)
     where 
         F: FnMut(String) -> ResponseStream,
     {
-        if active.is_some() {
+        if stream.is_some() {
             return;
         }
 
@@ -142,36 +145,32 @@ impl App {
             return;
         }    
 
-        self.messages.push(prompt.clone());
-        self.messages.push(String::new());
+        let user_message = Entry::User(prompt.clone());
+        self.messages.push(user_message);
+        self.messages.push(Entry::Assistant { reasoning: String::new(), answer: String::new() });
         self.user_input = Self::new_user_input();
 
-        *active = Some(ActiveRequest {
-            response_index: self.messages.len() - 1,
-            stream: request(prompt)
-        });
+        *stream= Some(request(prompt));
     }
 
     fn handle_response_chunk(
         &mut self,
         chunk: Option<Result<TextStreamEvent>>,
-        active: &mut Option<ActiveRequest>, 
+        stream: &mut Option<ResponseStream>, 
     ) -> Result<()> {
         match chunk {
-            Some(Ok(TextStreamEvent::Chunk { text, .. })) => {
-                if let Some(response) = active {
-                    self.append_response_chunk(response.response_index, &text)?;
-                }
+            Some(Ok(TextStreamEvent::Chunk { text, is_reasoning, .. })) => {
+                self.append_chunk(&text, is_reasoning);
             },
             Some(Ok(TextStreamEvent::Error { message })) => {
-                self.messages.push(format!("Server error: {message}"));
-                *active = None;
+                self.messages.push(Entry::Error(format!("Server error: {message}")));
+                *stream= None;
             },
             Some(Err(error)) => {
-                self.messages.push(format!("Response failed: {error:#}"));
-                *active = None;
+                self.messages.push(Entry::Error(format!("Response failed: {error:#}")));
+                *stream= None;
             },
-            None => *active = None,
+            None => *stream= None,
         }
 
         Ok(())
@@ -197,12 +196,14 @@ impl App {
         Ok(())
     }
 
-    pub fn append_response_chunk(&mut self, response_index: usize, chunk: &str) -> Result<()> {
-        let response = self.messages
-            .get_mut(response_index)
-            .context("assistant response message is missing")?;
-        response.push_str(chunk);
-        Ok(())
+    fn append_chunk(
+        &mut self,
+        text: &str,
+        is_reasoning: bool
+    ) {
+        if let Some(Entry::Assistant { reasoning, answer }) = self.messages.last_mut() {
+            if is_reasoning { reasoning } else { answer }.push_str(text);
+        }
     }
 
     fn panels (&self, area: Rect) -> Panels {
@@ -211,8 +212,26 @@ impl App {
     }
 
     fn conversation_paragraph(&self) -> Paragraph <'static> {
-        Paragraph::new(Text::from(self.messages.join("\n\n")))
-            .wrap(Wrap { trim: false } )
+        let mut blocks = Vec::new();
+        for entry in &self.messages {
+            match entry {
+                Entry::User(text) | Entry::Error(text) => blocks.push(text),
+                Entry::Assistant {reasoning, answer } => {
+                    blocks.push(reasoning);
+                    blocks.push(answer)
+                }
+            }
+        }
+        let mut lines = Vec::new();
+        for block in blocks.into_iter().filter(|block| !block.is_empty()) {
+            if !lines.is_empty() {
+                lines.push(Line::from(""));
+            }
+            for line in block.lines() {
+                lines.push(Line::from(line.to_string())); 
+            }
+        }
+        Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false })
     }
 
     fn conversation_block() -> Block<'static> {

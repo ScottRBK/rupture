@@ -85,7 +85,7 @@ where
     impl Stream<Item = Result<AgentChunkResponse, AgentError>> + Send + 'static {
         try_stream! {
 
-            self.messages.push(Message::User{ content: prompt.into() });
+            self.messages.push(Message::User{ content: prompt });
 
             let mut request = CompletionRequest::new(
                 self.llm_config.model.id.clone(),
@@ -98,12 +98,19 @@ where
             let stream = self.gateway.stream(request).await?;
             futures::pin_mut!(stream); 
             while let Some(chunk) = stream.next().await {
-                // TODO: Handle reasoning properly
-                if let Some(text) = chunk?.text {
+                let chunk = chunk?;
+                if let Some(text) = chunk.text {
                     yield AgentChunkResponse { 
                         chunk_text: text,
                         token_count: 0, // TODO: manage token counts
                         is_reasoning: false 
+                    }
+                }
+                if let Some(reasoning) = chunk.reasoning {
+                    yield AgentChunkResponse { 
+                        chunk_text: reasoning, 
+                        token_count: 0, // TODO: manage token counts
+                        is_reasoning: true 
                     }
                 }
             }

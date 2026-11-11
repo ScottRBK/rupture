@@ -20,6 +20,11 @@ pub fn chunk(text: impl Into<String>) -> TextStreamEvent {
     TextStreamEvent::Chunk { text: text.into(), token_count: 0, is_reasoning: false }
 }
 
+/// Reasoning (thinking) chunk, as providers send before or alongside content.
+pub fn reasoning_chunk(text: impl Into<String>) -> TextStreamEvent {
+    TextStreamEvent::Chunk { text: text.into(), token_count: 0, is_reasoning: true }
+}
+
 struct ObservedSource {
     stream: ResponseStream,
     closed: mpsc::UnboundedSender<()>,

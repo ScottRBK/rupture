@@ -1,7 +1,7 @@
 mod support;
 
 use crossterm::event::KeyCode;
-use support::{Harness, chunk, terminal_key};
+use support::{Harness, chunk, reasoning_chunk, terminal_key};
 
 #[tokio::test]
 async fn page_up_and_quit_work_before_response_completion() {
@@ -290,4 +290,79 @@ async fn always_ready_stream_does_not_starve_input_on_the_single_thread_runtime(
 
     // Assert at the rendered screen and loop-exit boundaries.
     assert!(drafting.contains("HOT"), "{drafting}");
+}
+
+#[tokio::test]
+async fn streamed_fragments_assemble_into_one_line() {
+    // Arrange: providers deliver answer text as tiny deltas.
+    let mut app = Harness::new();
+    app.submit("say i'm").await;
+
+    // Act.
+    app.sources[0].send(Ok(chunk("i"))).await.unwrap();
+    app.sources[0].send(Ok(chunk("'m"))).await.unwrap();
+    app.sources[0].send(Ok(chunk(" fine"))).await.unwrap();
+    let screen = app.wait_screen(|screen| screen.contains("fine")).await;
+    app.finish().await.unwrap();
+
+    // Assert: fragments glue together instead of landing one per line.
+    assert!(screen.contains("i'm fine"), "{screen}");
+}
+
+#[tokio::test]
+async fn empty_chunk_does_not_split_the_answer() {
+    // Arrange: SSE keep-alives can surface as empty deltas.
+    let mut app = Harness::new();
+    app.submit("say i'm").await;
+
+    // Act: an empty chunk lands before any content, then the fragments.
+    app.sources[0].send(Ok(chunk(""))).await.unwrap();
+    app.sources[0].send(Ok(chunk("i"))).await.unwrap();
+    app.sources[0].send(Ok(chunk("'m fine"))).await.unwrap();
+    let screen = app.wait_screen(|screen| screen.contains("fine")).await;
+    app.finish().await.unwrap();
+
+    // Assert: the answer is one message; no stray blank line splits it.
+    assert!(screen.contains("i'm fine"), "{screen}");
+}
+
+#[tokio::test]
+async fn interleaved_reasoning_and_answer_fragments_reassemble() {
+    // Arrange: some providers alternate reasoning_content and content deltas,
+    // so the answer arrives in pieces separated by thinking.
+    let mut app = Harness::new();
+    app.submit("say i'm").await;
+
+    // Act.
+    app.sources[0].send(Ok(reasoning_chunk("thinking"))).await.unwrap();
+    app.sources[0].send(Ok(chunk("i"))).await.unwrap();
+    app.sources[0].send(Ok(reasoning_chunk(" more"))).await.unwrap();
+    app.sources[0].send(Ok(chunk("'m fine"))).await.unwrap();
+    let screen = app.wait_screen(|screen| screen.contains("fine")).await;
+    app.finish().await.unwrap();
+
+    // Assert: each kind reassembles into a single block, regardless of
+    // how the deltas interleave.
+    assert!(screen.contains("thinking more"), "{screen}");
+    assert!(screen.contains("i'm fine"), "{screen}");
+}
+
+#[tokio::test]
+async fn thinking_renders_above_the_answer_even_when_content_arrives_first() {
+    // Arrange: some models send the first content delta before any reasoning.
+    let mut app = Harness::new();
+    app.submit("question").await;
+
+    // Act: content opens first, reasoning opens after it.
+    app.sources[0].send(Ok(chunk("answer first"))).await.unwrap();
+    app.sources[0].send(Ok(reasoning_chunk("thinking later"))).await.unwrap();
+    let screen = app
+        .wait_screen(|screen| screen.contains("thinking later"))
+        .await;
+    app.finish().await.unwrap();
+
+    // Assert: reading order stays thinking-then-answer, not arrival order.
+    let thinking = screen.find("thinking later").expect("thinking visible");
+    let answer = screen.find("answer first").expect("answer visible");
+    assert!(thinking < answer, "{screen}");
 }

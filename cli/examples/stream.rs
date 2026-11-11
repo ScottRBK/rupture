@@ -76,14 +76,3 @@ pub async fn text_prompt(prompt: String) -> impl Stream<Item = Result<String>> +
     }
 }
 
-fn handle_sse_line(line: &str) -> Option<Result<String>> {
-    let line = line.trim();
-
-    if line.is_empty() {
-        return None;
-    }
-
-    let data = line.strip_prefix("data:")?.trim_start();
-
-    Some(Ok(data.to_string()))
-}

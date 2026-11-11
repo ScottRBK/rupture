@@ -50,7 +50,7 @@ async fn prompt(
 
     let prompt = request.prompt;
 
-    let model = Model::new("glm-5.3-flash", None, None);
+    let model = Model::new("dsv41-flash", None, None);
 
     let llm_config = LlmConfig {
         model,
